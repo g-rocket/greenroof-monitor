@@ -96,29 +96,34 @@ public class GreenroofServer {
 		}
 		try {
 			boolean stopByteWritten = false;
-			while(!socket.isClosed() && !stopByteWritten){
-				while(input.available() < 7) Thread.yield();
-				byte[] data = new byte[7];
+			while(/*!socket.isClosed() &&*/ !stopByteWritten){
+				long sTime = System.currentTimeMillis();
+				while(input.available() < 8 && 
+						(System.currentTimeMillis() - sTime < 2000)){
+					Thread.yield();
+				}
+				byte[] data = new byte[8];
 				int length = input.read(data);
 				System.out.println("Recieved "+print(data));
-				if(length != 7){
+				if(length != 8){
 					throw new IOException("read wrong number of bytes: " + length);
 				}
-				if((data[6] & 0x80) != 0x80){
-					throw new IOException("bad data: " + print(data));
+				if((data[7] & 0x80) != 0x80){
+					throw new IOException("last byte not a stop byte: " + print(data));
 				}
 				if((data[0] & 0x80) != 0x00 ||
 				   (data[1] & 0x80) != 0x00 ||
 				   (data[2] & 0x80) != 0x00 ||
 				   (data[3] & 0x80) != 0x00 ||
 				   (data[4] & 0x80) != 0x00 ||
-				   (data[5] & 0x80) != 0x00){
-					throw new IOException("bad data: " + print(data));
+				   (data[5] & 0x80) != 0x00 ||
+				   (data[6] & 0x80) != 0x00){
+					throw new IOException("one of first 7 bytes is a stop byte: " + print(data));
 				}
-				if((data[0] & 0x40) != 0x00){
+				/*if((data[0] & 0x40) != 0x00){
 					throw new IOException("bad time (too big): " +
 							Arrays.toString(data));
-				}
+				}*/
 				long time = 
 						((data[0] & 0x3f) << 25) |
 						((data[1] & 0x7f) << 18) |
@@ -130,15 +135,27 @@ public class GreenroofServer {
 						((data[5] & 0x7f) << 1) |
 						((data[6] & 0x80) >> 6));
 				byte id = (byte)(data[6] & 0x3f);
-				//System.out.println("read one line: " + "("+time+", "+reading+","+id+")");
+				System.out.println("read one line: " + "("+time+", "+reading+","+id+")");
 				readings.add(new SensorReading(reading, connectionStartTime - time, id));
-				//System.out.println("put in map");
+				System.out.println("put in map");
 				//System.out.printf("data[6] = 0x%x\n",data[6]);
 				//System.out.printf("data[6] == 0xff -> %b\n", data[6] == (byte)0xff);
-				if(data[6] == (byte)0xff) stopByteWritten = true;
+				if(data[7] == (byte)0xff){
+					System.out.println("Recieved end transmission byte");
+					stopByteWritten = true;
+				} else if(data[7] == (byte)0x80){
+					System.out.println("Recieved continue transmission byte");
+				}
 				//System.out.println("socket.isClosed() = " + socket.isClosed() + ", stopByteWritten = " + stopByteWritten);
 			}
+			socket.getOutputStream().write(0xff); // finished processing data
 		} catch (IOException e) {
+			try {
+				socket.getOutputStream().write(0x80); // problem
+			} catch(IOException e2) {
+				System.out.println("Problem reporting problem");
+				e2.printStackTrace();
+			}
 			throw new RuntimeException(e);
 		} finally {
 			try {
